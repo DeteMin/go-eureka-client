@@ -2,7 +2,6 @@ package eureka
 
 import (
     "errors"
-    "math/rand"
     "os"
     "os/signal"
     "strings"
@@ -63,13 +62,13 @@ func (t *Client) RegisterVo(vo *InstanceVo) *Client {
 }
 
 // Api for sending rest http to eureka server
-func (t *Client) Api() (*EurekaServerApi, error) {
-    api, err := t.pickEurekaServerApi()
+func (t *Client) Api() ([]*EurekaServerApi, error) {
+    apis, err := t.pickEurekaServerApi()
     if err != nil {
         return nil, err
     }
 
-    return api, nil
+    return apis, nil
 }
 
 func (t *Client) GetInstance() *InstanceVo {
@@ -152,34 +151,33 @@ func (t *Client) getServiceUrlsWithZones() error {
 }
 
 // rand to pick service url
-func (t *Client) pickServiceUrl() (string, bool) {
+func (t *Client) pickServiceUrl() ([]string, bool) {
     if len(t.serviceUrls) == 0 {
         // if serviceUrls not init, try to fetch service urls one time
         err := t.getServiceUrlsWithZones()
         if err != nil {
-            return "", false
+            return nil, false
         }
     }
 
     t.mu.RLock()
     defer t.mu.RUnlock()
 
-    index := 0
-    if len(t.serviceUrls) > 1 {
-        index = rand.Intn(len(t.serviceUrls) - 1)
-    }
-    return t.serviceUrls[index], true
+    return t.serviceUrls, true
 }
 
 // rand to pick service url and new EurekaServerApi instance
-func (t *Client) pickEurekaServerApi() (*EurekaServerApi, error) {
-    url, ok := t.pickServiceUrl()
+func (t *Client) pickEurekaServerApi() ([]*EurekaServerApi, error) {
+    urls, ok := t.pickServiceUrl()
     if !ok {
         log.Errorf("No service url is available to pick.")
         return nil, errors.New("No service url is available to pick.")
     }
-
-    return NewEurekaServerApi(url), nil
+    apis := make([]*EurekaServerApi, 0)
+    for _, url := range urls {
+        apis = append(apis, NewEurekaServerApi(url))
+    }
+    return apis, nil
 }
 
 // register instance (default current status is STARTING)
@@ -196,30 +194,38 @@ func (t *Client) registerWithEureka() {
             return
         }
 
-        api, err := t.Api()
+        apis, err := t.Api()
         if err != nil {
             time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
             continue
         }
 
-        instanceId, err := api.RegisterInstanceWithVo(t.instance)
-        if err != nil {
-            log.Errorf("Client register failed, err=%s", err.Error())
-            time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-            continue
-        }
-        t.instance.InstanceId = instanceId
+        for _, api := range apis {
+            for {
+                instanceId, err := api.RegisterInstanceWithVo(t.instance)
+                if err != nil {
+                    log.Errorf("Client register failed, err=%s", err.Error())
+                    time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
+                    continue
+                }
+                t.instance.InstanceId = instanceId
 
-        err = api.UpdateInstanceStatus(t.instance.App, t.instance.InstanceId, STATUS_UP)
-        if err != nil {
-            log.Errorf("Client UP failed, err=%s", err.Error())
-            time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-            continue
+                err = api.UpdateInstanceStatus(t.instance.App, t.instance.InstanceId, STATUS_UP)
+                if err != nil {
+                    log.Errorf("Client UP failed, err=%s", err.Error())
+                    time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
+                    continue
+                }
+
+                // if success to register to eureka and update status tu UP
+                // then break loop
+                break
+            }
         }
 
         // if success to register to eureka and update status tu UP
         // then break loop
-        break;
+        break
     }
 
     // send heartbeat
@@ -230,21 +236,26 @@ func (t *Client) registerWithEureka() {
 func (t *Client) heartbeat() {
     go func() {
         for {
-            api, err := t.Api()
+            apis, err := t.Api()
             if err != nil {
                 time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
                 continue
             }
 
-            err = api.SendHeartbeat(t.instance.App, t.instance.InstanceId)
-            if err != nil {
-                log.Errorf("Failed to send heartbeat, err=%s", err.Error())
-                time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-                continue
+            for _, api := range apis {
+                for {
+                    err = api.SendHeartbeat(t.instance.App, t.instance.InstanceId)
+                    if err != nil {
+                        log.Errorf("Failed to send heartbeat, err=%s", err.Error())
+                        time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
+                        continue
+                    }
+
+                    log.Debugf("Heartbeat app=%s, instanceId=%s", t.instance.App, t.instance.InstanceId)
+                    time.Sleep(time.Duration(t.config.HeartbeatIntervals) * time.Second)
+                }
             }
 
-            log.Debugf("Heartbeat app=%s, instanceId=%s", t.instance.App, t.instance.InstanceId)
-            time.Sleep(time.Duration(t.config.HeartbeatIntervals) * time.Second)
         }
     }()
 }
@@ -261,26 +272,28 @@ func (t *Client) refreshRegistry() {
 }
 
 func (t *Client) fetchRegistry() (map[string]ApplicationVo, error) {
-    api, err := t.Api()
+    apis, err := t.Api()
     if err != nil {
         log.Errorf("Failed to QueryAllInstances, err=%s", err.Error())
         return nil, err
     }
 
-    apps, err := api.QueryAllInstances()
-    if err != nil {
-        log.Errorf("Failed to QueryAllInstances, err=%s", err.Error())
-        return nil, err
-    }
+    for _, api := range apis {
+        apps, err := api.QueryAllInstances()
+        if err != nil {
+            log.Errorf("Failed to QueryAllInstances, err=%s", err.Error())
+            return nil, err
+        }
 
-    t.mu.Lock()
-    defer t.mu.Unlock()
+        t.mu.Lock()
+        defer t.mu.Unlock()
 
-    // @TODO  FilterOnlyUpInstances  true,
+        // @TODO  FilterOnlyUpInstances  true,
 
-    t.registryApps = make(map[string]ApplicationVo)
-    for _, app := range apps {
-        t.registryApps[app.Name] = app
+        t.registryApps = make(map[string]ApplicationVo)
+        for _, app := range apps {
+            t.registryApps[app.Name] = app
+        }
     }
 
     return t.registryApps, nil
@@ -288,7 +301,8 @@ func (t *Client) fetchRegistry() (map[string]ApplicationVo, error) {
 
 // for graceful kill. Here handle SIGTERM signal to do sth
 // e.g: kill -TERM $pid
-//      or "ctrl + c" to exit
+//
+//	or "ctrl + c" to exit
 func (t *Client) handleSignal() {
     if t.signalChan == nil {
         t.signalChan = make(chan os.Signal)
@@ -306,16 +320,18 @@ func (t *Client) handleSignal() {
             log.Infof("Receive exit signal, client instance going to de-register, instanceId=%s.", t.instance.InstanceId)
 
             // de-register instance
-            api, err := t.Api()
+            apis, err := t.Api()
             if err != nil {
                 log.Errorf("Failed to get EurekaServerApi instance, de-register %s failed, err=%s", t.instance.InstanceId, err.Error())
                 return
             }
 
-            err = api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
-            if err != nil {
-                log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
-                return
+            for _, api := range apis {
+                err = api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
+                if err != nil {
+                    log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
+                    return
+                }
             }
 
             log.Infof("de-register %s success.", t.instance.InstanceId)
