@@ -323,12 +323,14 @@ func (t *Client) handleSignal() {
 				return
 			}
 
-			for _, api := range apis {
-				err = api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
-				if err != nil {
-					log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
-					return
-				}
+			for i, _ := range apis {
+				go func() {
+					err = apis[i].DeRegisterInstance(t.instance.App, t.instance.InstanceId)
+					if err != nil {
+						log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
+						return
+					}
+				}()
 			}
 
 			log.Infof("de-register %s success.", t.instance.InstanceId)

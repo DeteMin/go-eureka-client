@@ -6,7 +6,7 @@ func TestClient_Register(t *testing.T) {
 	eurekaConfig := GetDefaultEurekaClientConfig()
 	eurekaConfig.UseDnsForFetchingServiceUrls = false
 	eurekaConfig.ServiceUrl = map[string]string{
-		DEFAULT_ZONE: "http://hddata:hddata$2019@192.168.1.53:8002/eureka,http://hddata:hddata$2019@192.168.1.59:8002/eureka",
+		DEFAULT_ZONE: "http://hddata:hddata$2019@192.168.1.116:8002/eureka,http://hddata:hddata$2019@192.168.1.59:8002/eureka",
 	}
 	eurekaClient := new(Client).Config(eurekaConfig).Register("gw-test-eureka", 80)
 	eurekaClient.Run()
@@ -20,9 +20,15 @@ func Test_Del(t *testing.T) {
 	eurekaConfig := GetDefaultEurekaClientConfig()
 	eurekaConfig.UseDnsForFetchingServiceUrls = false
 	eurekaConfig.ServiceUrl = map[string]string{
-		DEFAULT_ZONE: "http://hddata:hddata$2019@192.168.1.53:8002/eureka,http://hddata:hddata$2019@192.168.1.59:8002/eureka",
+		DEFAULT_ZONE: "http://hddata:hddata$2019@192.168.1.116:8002/eureka,http://hddata:hddata$2019@192.168.1.59:8002/eureka",
 	}
-	eurekaClient := new(Client).Config(eurekaConfig).Register("gw-test-eureka", 80)
+	eurekaClient := new(Client).Config(eurekaConfig).Register("GW-VIDEOSY-SERVICE", 8013)
+
+	vo := eurekaClient.GetInstance()
+	vo.Hostname = "192.168.1.144"
+	vo.IppAddr = "192.168.1.144"
+	eurekaClient = eurekaClient.RegisterVo(vo)
+
 	eurekaClient.Run()
 
 	apis, err := eurekaClient.Api()
