@@ -1,4 +1,4 @@
-module github.com/HikoQiu/go-eureka-client/eureka
+module github.com/DeteMin/go-eureka-client/eureka
 
 go 1.19
 
