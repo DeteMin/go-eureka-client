@@ -186,6 +186,7 @@ func (t *Client) registerWithEureka() {
 
 	// ensure client succeed to register to eureka server
 	for {
+	flag:
 		if t.instance == nil {
 			log.Errorf("Eureka instance can't be nil")
 			return
@@ -194,30 +195,25 @@ func (t *Client) registerWithEureka() {
 		apis, err := t.Api()
 		if err != nil {
 			time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-			continue
+			goto flag
 		}
 
 		for _, api := range apis {
-			for {
-				instanceId, err := api.RegisterInstanceWithVo(t.instance)
-				if err != nil {
-					log.Errorf("Client register failed, err=%s", err.Error())
-					time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-					continue
-				}
-				t.instance.InstanceId = instanceId
-
-				err = api.UpdateInstanceStatus(t.instance.App, t.instance.InstanceId, STATUS_UP)
-				if err != nil {
-					log.Errorf("Client UP failed, err=%s", err.Error())
-					time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-					continue
-				}
-
-				// if success to register to eureka and update status tu UP
-				// then break loop
-				break
+			instanceId, err := api.RegisterInstanceWithVo(t.instance)
+			if err != nil {
+				log.Errorf("Client register failed, err=%s", err.Error())
+				time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
+				goto flag
 			}
+			t.instance.InstanceId = instanceId
+
+			err = api.UpdateInstanceStatus(t.instance.App, t.instance.InstanceId, STATUS_UP)
+			if err != nil {
+				log.Errorf("Client UP failed, err=%s", err.Error())
+				time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
+				goto flag
+			}
+
 		}
 
 		// if success to register to eureka and update status tu UP
@@ -233,26 +229,24 @@ func (t *Client) registerWithEureka() {
 func (t *Client) heartbeat() {
 	go func() {
 		for {
+		flag:
 			apis, err := t.Api()
 			if err != nil {
 				time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-				continue
+				goto flag
 			}
 
 			for _, api := range apis {
-				for {
-					err = api.SendHeartbeat(t.instance.App, t.instance.InstanceId)
-					if err != nil {
-						log.Errorf("Failed to send heartbeat, err=%s", err.Error())
-						time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-						continue
-					}
-
-					log.Debugf("Heartbeat app=%s, instanceId=%s", t.instance.App, t.instance.InstanceId)
-					time.Sleep(time.Duration(t.config.HeartbeatIntervals) * time.Second)
+				err = api.SendHeartbeat(t.instance.App, t.instance.InstanceId)
+				if err != nil {
+					log.Errorf("Failed to send heartbeat, err=%s", err.Error())
+					time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
+					goto flag
 				}
-			}
 
+				log.Debugf("Heartbeat app=%s, instanceId=%s", t.instance.App, t.instance.InstanceId)
+				time.Sleep(time.Duration(t.config.HeartbeatIntervals) * time.Second)
+			}
 		}
 	}()
 }
@@ -323,14 +317,12 @@ func (t *Client) handleSignal() {
 				return
 			}
 
-			for i, _ := range apis {
-				go func() {
-					err = apis[i].DeRegisterInstance(t.instance.App, t.instance.InstanceId)
-					if err != nil {
-						log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
-						return
-					}
-				}()
+			for _, api := range apis {
+				err = api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
+				if err != nil {
+					log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
+					return
+				}
 			}
 
 			log.Infof("de-register %s success.", t.instance.InstanceId)
